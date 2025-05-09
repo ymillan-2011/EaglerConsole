@@ -1,558 +1,1125 @@
-// This is generally a bad practice, but we need to run scripts in the main context before the DOM loads. Because we are only matching eaglercraft.com, unsafeWindow should be safe to use.
-// If someone knows a better way of doing this, please create an issue
-try {
-  unsafeWindow.console.warn("DANGER: This userscript is  using unsafeWindow. Unsafe websites could potentially use this to gain access to data and other content that the browser normally wouldn't allow!")
-  Object.defineProperty(window, "clientWindow", {
-      value: unsafeWindow
-  }); // If this is a userscript, use unsafeWindow
-} catch {
-  Object.defineProperty(window, "clientWindow", {
-      value: window
-  }); // If this is plain javascript, use window
-}
-clientWindow.console.log("Eagler Console v1.0.0")
-// TODO: remove the mobile check is implement the dynamic enabling and disabling of individual features
-function isMobile() {
-  try {
-      document.createEvent("TouchEvent");
-      return true;
-  } catch (e) {
-      return false;
-  }
-}
-if(!isMobile()) {
-  alert("WARNING: This script was created for controller use, and it will break functionality for keyboard use!");
-}
-// TODO: consolidate all of these into a single object?
-clientWindow.crouchLock = false; // Used for crouch mobile control
-clientWindow.sprintLock = false; // Used for sprint mobile control
-clientWindow.keyboardFix = false; // keyboardFix ? "Standard Keyboard" : "Compatibility Mode"
-clientWindow.inputFix = false; // If true, Duplicate Mode
-clientWindow.blockNextInput = false; // Used for Duplicate Mode 
-clientWindow.hiddenInputFocused = false; // Used for keyboard display on mobile
-clientWindow.canvasTouchMode = 0; // Used for canvas touch handling
-/*
-  0   Idle
-  1   Touch initiated
-  2   Primary touch
-  3   Secondary touch
-  4   Scroll
-  5   Finished
-*/
-clientWindow.canvasTouchStartX = null;
-clientWindow.canvasTouchStartY = null;
-clientWindow.canvasTouchPreviousX = null;
-clientWindow.canvasTouchPreviousY = null;
-clientWindow.canvasPrimaryID = null;
-clientWindow.buttonTouchStartX = null;
+(function () {
+    ModAPI.meta.title("🎮 EaglerConsole | Controller Support");
+    ModAPI.meta.version("v1.2b-haptic-0");
+    ModAPI.meta.icon("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAANCAYAAACgu+4kAAAAAXNSR0IArs4c6QAAAPhJREFUOE+NkrEKgzAQhv+AOAguOnTQ1yjduoiufQkfy5foanHpVvoaOhR0EhxUSMnRhCRNSrNcjrv77v7kGD6nrmsu78I2TcN03xenpL7veZZlej6GYTB8FX9VwKGleJ7njOnF0zRRUZqmZJdlQRiGCIKA/OoBtCcAZQncbgRRAFE8zzO2bUOSJATZ9x3ruiKKIjXN8X7B83wl3wkQgTiO1RSGDssxACKmSyiKAl3XUQljjHHOuS3xCyAbyGJpBWAcR25L9AIEyJ5AAnSJPwGub/xbgvxj/c18u2LsgfwasSCu17chJMHeRFd3CdMBahP1oLj7uvvy3totwxHXpk7GAAAAAElFTkSuQmCC");
+    ModAPI.meta.credits("By ZXMushroom63 & elijahcg314");
+    ModAPI.meta.description("Adds various keybindings and features for controller support.");
+    ModAPI.require("player");
+    var gamepad = null;
+    window.addEventListener("gamepadconnected", (e) => {
+        gamepad = e.gamepad;
+        console.log("KMAP controller connected!", gamepad);
+    });
+    var isDebugBuild = (new URLSearchParams(location.search)).has("controller_debug_mode");
 
-// charCodeAt is designed for unicode characters, and doesn't match the behavior of the keyCodes used by KeyboardEvents, thus necessitating this function
-String.prototype.toKeyCode = function() {
-      const keyCodeList = {"0": 48, "1": 49, "2": 50, "3": 51, "4": 52, "5": 53, "6": 54, "7": 55, "8": 56, "9": 57, "backspace": 8, "tab": 9, "enter": 13, "shift": 16, "ctrl": 17, "alt": 18, "pause_break": 19, "caps_lock": 20, "escape": 27, " ": 32, "page_up": 33, "page_down": 34, "end": 35, "home": 36, "left_arrow": 37, "up_arrow": 38, "right_arrow": 39, "down_arrow": 40, "insert": 45, "delete": 46, "a": 65, "b": 66, "c": 67, "d": 68, "e": 69, "f": 70, "g": 71, "h": 72, "i": 73, "j": 74, "k": 75, "l": 76, "m": 77, "n": 78, "o": 79, "p": 80, "q": 81, "r": 82, "s": 83, "t": 84, "u": 85, "v": 86, "w": 87, "x": 88, "y": 89, "z": 90, "left_window_key": 91, "right_window_key": 92, "select_key": 93, "numpad_0": 96, "numpad_1": 97, "numpad_2": 98, "numpad_3": 99, "numpad_4": 100, "numpad_5": 101, "numpad_6": 102, "numpad_7": 103, "numpad_8": 104, "numpad_9": 105, "*": 106, "+": 107, "-": 109, ".": 110, "/": 111, "f1": 112, "f2": 113, "f3": 114, "f4": 115, "f5": 116, "f6": 117, "f7": 118, "f8": 119, "f9": 120, "f10": 121, "f11": 122, "f12": 123, "num_lock": 144, "scroll_lock": 145, ";": 186, "=": 187, ",": 188, "-": 189, ".": 190, "/": 191, "\u0060": 192, "[": 219, "\u005C": 220, "]": 221, "\u0022": 222};
-  return keyCodeList[this];
-}
-// Overrides the addEventListener behavior to all code injection on keydown event listeners. This function has thrown TypeErrors on some Android devices because fn is not recognized as a function
-// This is used by Compatibility Mode to block invalid keyEvents
-const _addEventListener = EventTarget.prototype.addEventListener;
-Object.defineProperty(EventTarget.prototype, "addEventListener", {
-  value: function (type, fn, ...rest) {
-      if(type == 'keydown') { // Check if a keydown event is being added
-          _addEventListener.call(this, type, function(...args) {
-              if(args[0].isTrusted && clientWindow.keyboardFix) { // When we are in compatibility mode, we ignore all trusted keyboard events
-                  return;
-              }
-              return fn.apply(this, args); // Appends the rest of the function specified by addEventListener
-          }, ...rest);
-      } else { // If it's not a keydown event, behave like normal (hopefully)
-          _addEventListener.call(this, type, fn, ...rest);
-      }
-  }
-});
-// Overrides preventDefault, because on some (Android) devices you couldn't type into hiddenInput
-const _preventDefault = Event.prototype.preventDefault;
-Event.prototype.preventDefault = function(shouldBypass) {
-if(document.activeElement.id != "hiddenInput" || shouldBypass) { // activeElement is what element is currently focused
-    this._preventDefault =  _preventDefault;
-    this._preventDefault();
-}
-}
-// Key and mouse events
-// Note: the client must have the key, keyCode, and which parameters defined or it will crash
-// Note: for text inputs, the client only reads from the "key" paramater
-//     * an exception to this appears to be the shift and backspace key
-// Note: for inGame inputs, the client only reads from the "keyCode character"
-function keyEvent(name, state) {
-  const charCode = name.toKeyCode();
-  let evt = new KeyboardEvent(state, {
-      "key": name,
-      "keyCode": charCode,
-      "which": charCode
-  });
-  clientWindow.dispatchEvent(evt);
-}
-function mouseEvent(number, state, element, event = {"clientX": 0, "clientY" : 0, "screenX": 0, "screenY": 0}) {
-  element.dispatchEvent(new PointerEvent(state, {
-      "button": number,
-      "buttons": number,
-      "clientX": event.clientX,
-      "clientY" : event.clientY,
-      "screenX": event.screenX,
-      "screenY": event.screenY
-  }));
-}
-function wheelEvent(element, delta) {
-  element.dispatchEvent(new WheelEvent("wheel", {
-      "wheelDeltaY": delta
-}));
-}
-function setButtonVisibility(pointerLocked) {
-  let inGameStyle = document.getElementById('inGameStyle');
-  let inMenuStyle = document.getElementById('inMenuStyle');
-  inGameStyle.disabled = pointerLocked;
-  inMenuStyle.disabled = !pointerLocked;  
-}
-// POINTERLOCK
-// When requestpointerlock is called, this dispatches an event, saves the requested element to clientWindow.fakelock, and unhides the touch controls
-clientWindow.fakelock = null;
+    const LF = String.fromCharCode(10);
+    ModAPI.addCredit("Eagler Controller Support Mod", "ZXMushroom63",
+        "  - Coded the mod" + LF +
+        "  - Almost had an aneurism" + LF +
+        "  - At least it works now");
+    ModAPI.addCredit("Eagler Controller Support Mod", "elijahc314",
+        "  - Playtested the mod" + LF +
+        "  - Got ZXMushroom63 to do any amount of work" + LF +
+        "  - Threw a fat list of bug reports at ZXMushroom63");
 
-Object.defineProperty(Element.prototype, "requestPointerLock", {
-  value: function() {
-      clientWindow.fakelock = this
-      document.dispatchEvent(new Event('pointerlockchange'));
-      setButtonVisibility(true);
-      return true
-  }
-});
+    var CURRENT_KMAP_PROFILE = "keyboard";
+    const PROFILE_KEYBOARD = "keyboard";
+    const PROFILE_CONTROLLER = "controller";
+    const CONTROLLER_CONSTANT = 0x3000;
+    const STICK_CONSTANT = 0x3100;
+    const STICK_PRESS_SENSITIVITY = 0.5;
+    var stickDriftSuppression = 0;
+    const STICK_DRIFT_SUPPRESSION_FN = (x => ((Math.abs(x) > (stickDriftSuppression * 0.76))) ? x : 0);
+    const DPAD_SPEED = 0.65;
+    const isGuiControls = ModAPI.reflect.getClassById("net.minecraft.client.gui.GuiControls").instanceOf;
+    const isGuiChat = ModAPI.reflect.getClassById("net.minecraft.client.gui.GuiChat").instanceOf;
+    const isGuiSlider = ModAPI.reflect.getClassById("net.minecraft.client.gui.GuiOptionSlider").instanceOf;
+    const isGuiOptionButton = ModAPI.reflect.getClassById("net.minecraft.client.gui.GuiOptionButton").instanceOf;
+    const eaglerCanvas = document.querySelector("._eaglercraftX_canvas_element");
+    const GAMEPAD_CURSOR = document.createElement("div");
+    const CONTROLLER_DEFAULTS = {
+        "key.attack": 7 + CONTROLLER_CONSTANT,
+        "key.use": 6 + CONTROLLER_CONSTANT,
+        "key.forward": 3 + STICK_CONSTANT,
+        "key.left": 2 + STICK_CONSTANT,
+        "key.back": 1 + STICK_CONSTANT,
+        "key.right": 0 + STICK_CONSTANT,
+        "key.jump": 0 + CONTROLLER_CONSTANT,
+        "key.sneak": 11 + CONTROLLER_CONSTANT,
+        "key.sprint": 10 + CONTROLLER_CONSTANT,
+        "key.drop": 13 + CONTROLLER_CONSTANT,
+        "key.inventory": 3 + CONTROLLER_CONSTANT,
+        "key.chat": 15 + CONTROLLER_CONSTANT,
+        "key.playerlist": 8 + CONTROLLER_CONSTANT,
+        "key.pickItem": 0,
+        "key.command": 0,
+        "key.screenshot": 0,
+        "key.togglePerspective": 12 + CONTROLLER_CONSTANT,
+        "key.smoothCamera": 0,
+        "key.zoomCamera": 0,
+        "key.function": 0,
+        "key.close": 9 + CONTROLLER_CONSTANT,
+        "key.hotbar.1": 0,
+        "key.hotbar.2": 0,
+        "key.hotbar.3": 0,
+        "key.hotbar.4": 0,
+        "key.hotbar.5": 0,
+        "key.hotbar.6": 0,
+        "key.hotbar.7": 0,
+        "key.hotbar.8": 0,
+        "key.hotbar.9": 0,
+        "Left Click": 0 + CONTROLLER_CONSTANT,
+        "Right Click": 0,
+        "Looking (any direction)": 4 + STICK_CONSTANT,
+        "Hotbar Previous": 4 + CONTROLLER_CONSTANT,
+        "Hotbar Next": 5 + CONTROLLER_CONSTANT,
+        "Shift Click": 0,
+        "Open Settings": 9 + CONTROLLER_CONSTANT,
+        "Parent Screen / Back": 1 + CONTROLLER_CONSTANT,
+        "Exit Chat": 1 + CONTROLLER_CONSTANT,
+        "Send Chat": 0 + CONTROLLER_CONSTANT,
+        "Sneak #2": 1 + CONTROLLER_CONSTANT,
+    };
+    // 1 + CONTROLLER_CONSTANT = exit chat
+    // 0 + CONTROLLER_CONSTANT = chat simulate enter key (.keyTyped)
+    // 1 + CONTROLLER_CONSTANT = done button
+    GAMEPAD_CURSOR.innerText = "⊹";
+    GAMEPAD_CURSOR.style = `
+    position:fixed;
+    line-height: 16px;
+    font-family: monospace;
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+    text-align: center;
+    color: white;
+    text-shadow: 0px 0px 2px black;
+    top: 0px;
+    left: 0px;
+    z-index: 999;
+    transform: translate(-8px, -9px) scale(2);
+    user-select: none;
+    display: none;
+    pointer-events: none;
+    `;
+    document.body.appendChild(GAMEPAD_CURSOR);
 
-
-// Makes pointerLockElement return clientWindow.fakelock
-Object.defineProperty(Document.prototype, "pointerLockElement", {
-  get: function() {
-      return clientWindow.fakelock;
-  }
-});
-// When exitPointerLock is called, this dispatches an event, clears the
-Object.defineProperty(Document.prototype, "exitPointerLock", {
-  value: function() {
-      clientWindow.fakelock = null
-      document.dispatchEvent(new Event('pointerlockchange'));
-      setButtonVisibility(false);
-      return true
-  }
-});
-
-// FULLSCREEN
-clientWindow.fakefull = null;
-// Stops the client from crashing when fullscreen is requested
-Object.defineProperty(Element.prototype, "requestFullscreen", {
-  value: function() {
-      clientWindow.fakefull = this
-      document.dispatchEvent(new Event('fullscreenchange'));
-      return true
-  }
-});
-Object.defineProperty(document, "fullscreenElement", {
-  get: function() {
-      return clientWindow.fakefull;
-  }
-});
-Object.defineProperty(Document.prototype, "exitFullscreen", {
-  value: function() {
-      clientWindow.fakefull = null
-      document.dispatchEvent(new Event('fullscreenchange'));
-      return true
-  }
-});
-
-// FILE UPLOADING
-// Safari doesn't recognize the element.click() used to display the file uploader as an action performed by the user, so it ignores it.
-// This hijacks the element.createElement() function to add the file upload to the DOM, so the user can manually press the button again.
-const _createElement = document.createElement;
-document.createElement = function(type, ignore) {
-  this._createElement = _createElement;
-  var element = this._createElement(type);
-  if(type == "input" && !ignore) { // We set the ingore flag to true when we create the hiddenInput
-      document.querySelectorAll('#fileUpload').forEach(e => e.parentNode.removeChild(e)); // Get rid of any left over fileUpload inputs
-      element.id = "fileUpload";
-      element.addEventListener('change', function(e) {
-          element.hidden = true;
-          element.style.display = "none";
-      }, {passive: false, once: true});
-      clientWindow.addEventListener('focus', function(e) {
-          setTimeout(() => {
-              element.hidden = true;
-              element.style.display = "none";
-          }, 300)
-      }, { once: true })
-      document.body.appendChild(element);
-  }
-  return element;
-}
-
-// Lazy way to hide touch controls through CSS.
-let inGameStyle = document.createElement("style");
-inGameStyle.id = "inGameStyle";
-inGameStyle.textContent = `
-  .inGame {
-      display: none;
-  }`;
-document.documentElement.appendChild(inGameStyle);
-
-let inMenuStyle = document.createElement("style");
-inMenuStyle.id = "inMenuStyle";
-inMenuStyle.textContent = `
-  .inMenu {
-      display: none;
-  }`;
-document.documentElement.appendChild(inMenuStyle);
-
-
-// The canvas is created by the client after it finishes unzipping and loading. When the canvas is created, this applies any necessary event listeners and creates buttons
-function waitForElm(selector) {
-  return new Promise(resolve => {
-      if (document.querySelector(selector)) {
-          return resolve(document.querySelector(selector));
-      }
-      const observer = new MutationObserver(mutations => {
-          if (document.querySelector(selector)) {
-              observer.disconnect();
-              resolve(document.querySelector(selector));
-          }
-      });
-      observer.observe(document.documentElement, {
-          childList: true,
-          subtree: true
-      });
-  });
-}
-function createTouchButton(buttonClass, buttonDisplay, elementName) {
-  var touchButton = document.createElement(elementName ?? 'button', true);
-  touchButton.classList.add(buttonClass);
-  touchButton.classList.add(buttonDisplay);
-  touchButton.classList.add("mobileControl");
-  touchButton.addEventListener("touchmove", function(e){e.preventDefault()}, false);
-  touchButton.addEventListener("contextmenu", function(e){e.preventDefault()});
-  return touchButton;
-}
-
-
-
-
-
-
-
-
-waitForElm('canvas').then(() => {insertCanvasElements()});
-function insertCanvasElements() {    
-  // Translates touchmove events to mousemove events when inGame, and touchmove events to wheele events when inMenu
-  var canvas = document.querySelector('canvas');
-  canvas.addEventListener("touchstart", function(e) {
-      if(clientWindow.canvasTouchMode < 2) { // If a touch is initiated but not assigned
-          if(clientWindow.canvasPrimaryID == null) {
-              clientWindow.canvasTouchMode = 1;
-              const primaryTouch = e.changedTouches[0];
-              clientWindow.canvasPrimaryID = primaryTouch.identifier
-              canvasTouchStartX = primaryTouch.clientX;
-              canvasTouchStartY = primaryTouch.clientY;
-              canvasTouchPreviousX = canvasTouchStartX
-              canvasTouchPreviousY = canvasTouchStartY
-
-              clientWindow.touchTimer = setTimeout(function(e) {
-                  // If our touch is still set to initiaited, set it to secondary touch
-                  if(clientWindow.canvasTouchMode == 1) {
-                      clientWindow.canvasTouchMode = 3;
-                      mouseEvent(2, "mousedown", canvas, primaryTouch)
-                      if(clientWindow.fakelock) { // We only dispatch mouseup inGame because we want to be able to click + drag items in GUI's
-                          mouseEvent(2, "mouseup", canvas, primaryTouch)
-                      }
-                  }
-              }, 300);
-          } else if(clientWindow.canvasTouchMode == 1 && !clientWindow.fakelock) { // If we already have a primary touch, it means we're using two fingers
-              clientWindow.canvasTouchMode = 4;
-              clearTimeout(clientWindow.crouchTimer); // TODO: Find out why this isn't redudnant
-          }
-      }
-  }, false);
-
-  canvas.addEventListener("touchmove", function(e) {
-      e.preventDefault() // Prevents window zoom when using two fingers
-      var primaryTouch;
-      for (let touchIndex = 0; touchIndex < e.targetTouches.length; touchIndex++) { // Iterate through our touches to find a touch event matching the primary touch ID
-          if(e.targetTouches[touchIndex].identifier == clientWindow.canvasPrimaryID) {
-              primaryTouch = e.targetTouches[touchIndex];
-              break;
-          }
-      }
-      if(primaryTouch) {
-          primaryTouch.distanceX = primaryTouch.clientX - canvasTouchStartX;
-          primaryTouch.distanceY = primaryTouch.clientY - canvasTouchStartY;
-          primaryTouch.squaredNorm = (primaryTouch.distanceX * primaryTouch.distanceX) + (primaryTouch.distanceY * primaryTouch.distanceY);
-          primaryTouch.movementX = primaryTouch.clientX - canvasTouchPreviousX;
-          primaryTouch.movementY = primaryTouch.clientY - canvasTouchPreviousY;
-          if(clientWindow.canvasTouchMode == 1) { // If the primary touch is still only initiated
-              if (primaryTouch.squaredNorm > 25) { // If our touch becomes a touch + drag
-                  clearTimeout(clientWindow.crouchTimer);
-                  clientWindow.canvasTouchMode = 2;
-                  if(!clientWindow.fakelock) { // When we're inGame, we don't want to be placing blocks when we are moving the camera around
-                      mouseEvent(1, "mousedown", canvas, primaryTouch);
-                  }
-              }
-          } else { // If our touch is primary, secondary, scroll or finished
-              if(clientWindow.canvasTouchMode == 4) { // If our touch is scrolling
-                  wheelEvent(canvas, primaryTouch.movementY)
-              } else {
-                  canvas.dispatchEvent(new MouseEvent("mousemove", {
-                      "clientX": primaryTouch.clientX,
-                      "clientY": primaryTouch.clientY,
-                      "screenX": primaryTouch.screenX,
-                      "screenY": primaryTouch.screenY, // The top four are used for item position when in GUI's, the bottom two are for moving the camera inGame
-                      "movementX": primaryTouch.movementX,
-                      "movementY": primaryTouch.movementY
-                  }));
-              }
-          }
-          canvasTouchPreviousX = primaryTouch.clientX
-          canvasTouchPreviousY = primaryTouch.clientY
-      }
-  }, false);
-
-  function canvasTouchEnd(e) {
-      for(let touchIndex = 0; touchIndex < e.changedTouches.length; touchIndex++) { // Iterate through changed touches to find primary touch
-          if(e.changedTouches[touchIndex].identifier == clientWindow.canvasPrimaryID) {
-              let primaryTouch = e.changedTouches[touchIndex]
-              // When any of the controlling fingers go away, we want to wait until we aren't receiving any other touch events
-              if(clientWindow.canvasTouchMode == 2) {
-                  mouseEvent(1, "mouseup", canvas, primaryTouch)
-              } else if (clientWindow.canvasTouchMode == 3) {
-                  e.preventDefault(); // This prevents some mobile devices from dispatching a mousedown + mouseup event after a touch is ended
-                  mouseEvent(2, "mouseup", canvas, primaryTouch)
-              }
-              clientWindow.canvasTouchMode = 5;
-          }
-      }
-      if(e.targetTouches.length == 0) { // We want to wait until all fingers are off the canvas before we reset for the next cycle
-          clientWindow.canvasTouchMode = 0;
-          clientWindow.canvasPrimaryID = null;
-      }
-  }
-
-  canvas.addEventListener("touchend", canvasTouchEnd, false); 
-  canvas.addEventListener("touchcancel", canvasTouchEnd, false); // TODO: Find out why this is different than touchend
-  setButtonVisibility(clientWindow.fakelock != null); //Updates our mobile controls when the canvas finally loads
-  // All of the touch buttons
-
-  let controllerIndex = null;
-
-let jleftPressed = false;
-let jrightPressed = false;
-let jupPressed = false;
-let jdownPressed = false;
-
-let leftPressed = false;
-let rightPressed = false;
-let upPressed = false;
-let downPressed = false;
-
-let bluePressed = false;
-let yellowPressed = false;
-let redPressed = false;
-let greenPressed = false;
-
-let pausePressed = false;
-let selectPressed = false;
-let lbPressed = false;
-let rbPressed = false;
-let ltPressed = false;
-let rtPressed = false;
-let ljsPressed = false;
-let rjsPressed = false;
-
-let perspective=false;
-let debug=false;
-let drop=false;
-let chat=false;
-let jump=false;
-let inventory1=false;
-let inventory2=false;
-let lefthotbar=false;
-let righthotbar=false;
-let pause=false;
-let players=false;
-
-let rHorizontalValue = 0;
-let rVerticalValue = 0;
-
-
-window.addEventListener("gamepadconnected", (event) => {
-controllerIndex = event.gamepad.index;
-console.log("Controller Connected!");
-});
-
-window.addEventListener("gamepaddisconnected", (event) => {
-console.log("Controller Disconnected!");
-controllerIndex = null;
-});
-
-function controllerInput() {
-    if (controllerIndex !== null) {
-        const gamepad = navigator.getGamepads()[controllerIndex];
-        const buttons = gamepad.buttons;
-
-        const stickDeadZone = 0.4;
-
-        // Left joystick axes (used for player movement)
-        const leftRightValue = gamepad.axes[0];
-        const upDownValue = gamepad.axes[1];
-
-        // Right joystick axes (used for camera rotation)
-        rHorizontalValue = gamepad.axes[2];  // Horizontal movement of right joystick
-        rVerticalValue = gamepad.axes[3];    // Vertical movement of right joystick
-
-        // Handle left joystick
-        if (leftRightValue >= stickDeadZone) {
-            jrightPressed = true;
-        } else if (leftRightValue <= stickDeadZone) {
-            jrightPressed = false;
-        }
-        if (leftRightValue <= -stickDeadZone) {
-            jleftPressed = true;
-        } else if (leftRightValue >= -stickDeadZone) {
-            jleftPressed = false;
-        }
-
-        if (upDownValue >= stickDeadZone) {
-            jdownPressed = true;
-        } else if (upDownValue <= stickDeadZone) {
-            jdownPressed = false;
-        }
-        if (upDownValue <= -stickDeadZone) {
-            jupPressed = true;
-        } else if (upDownValue >= -stickDeadZone) {
-            jupPressed = false;
-        }
-
-        // Handle button presses
-        greenPressed = buttons[0].pressed;
-        redPressed = buttons[1].pressed;
-        bluePressed = buttons[2].pressed;
-        yellowPressed = buttons[3].pressed;
-
-        lbPressed = buttons[4].pressed;
-        rbPressed = buttons[5].pressed;
-        ltPressed = buttons[6].pressed;
-        rtPressed = buttons[7].pressed;
-
-        selectPressed = buttons[8].pressed;
-        pausePressed = buttons[9].pressed;
-
-        ljsPressed = buttons[10].pressed;
-        rjsPressed = buttons[11].pressed;
-
-        upPressed = buttons[12].pressed;
-        downPressed = buttons[13].pressed;
-        leftPressed = buttons[14].pressed;
-        rightPressed = buttons[15].pressed;
+    const CURSOR_POS = {
+        x: window.innerWidth / 2 - 8,
+        y: window.innerHeight / 2 - 8
     }
-}
-function rotateCamera() {
-    const sensitivity = 25;
-    if (rHorizontalValue !== 0 || rVerticalValue !== 0) {
-        let movementX = rHorizontalValue * sensitivity;
-        let movementY = rVerticalValue * sensitivity;
 
-        let canvas = document.querySelector('canvas');
-        canvas.dispatchEvent(new MouseEvent("mousemove", {
-            "movementX": movementX,
-            "movementY": movementY
-        }));
+    function simulateMouseEvent(type, button = 0) {
+        const event = new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: CURSOR_POS.x,
+            clientY: CURSOR_POS.y,
+            button: button,
+        });
+        eaglerCanvas.dispatchEvent(event);
     }
-}
+
+    function simulateWheelEvent(deltaY) {
+        const event = new WheelEvent("wheel", {
+            deltaY: deltaY
+        });
+        eaglerCanvas.dispatchEvent(event);
+    }
+
+    function positionCursor() {
+        // min constraint (top - left)
+        CURSOR_POS.x = Math.max(0, CURSOR_POS.x);
+        CURSOR_POS.y = Math.max(0, CURSOR_POS.y);
+
+        // max constraight (bottom - right)
+        CURSOR_POS.x = Math.min(window.innerWidth, CURSOR_POS.x);
+        CURSOR_POS.y = Math.min(window.innerHeight, CURSOR_POS.y);
+
+        GAMEPAD_CURSOR.style.left = CURSOR_POS.x + "px";
+        GAMEPAD_CURSOR.style.top = CURSOR_POS.y + "px";
+    }
+    positionCursor();
+
+    window.addEventListener("resize", () => {
+        CURSOR_POS.x = window.innerWidth / 2 - 8;
+        CURSOR_POS.y = window.innerHeight / 2 - 8;
+        positionCursor();
+    });
+
+    function lerp(a, b, k) {
+        return (b - a) * k + a;
+    }
+
+    const DEBUG_BIN = new Set();
+
+    function button_utility_script2(inputArr, bindingClass, actionBindMode) {
+        // By ZXMushroom63
+        // action bind mode:
+        // 0 - bind to the same as the binding class
+        // 1 - do not bind
+        // 2 - bind to GuiScreen
+        actionBindMode ||= 0;
+        var button = ModAPI.reflect.getClassById("net.minecraft.client.gui.GuiButton").constructors.find(x => x.length === 6);
+        var originalActionPerformed = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage(actionBindMode === 2 ? "net.minecraft.client.gui.GuiScreen" : bindingClass, "actionPerformed")];
+        var originalInit = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage(bindingClass, "initGui")];
+
+        if (actionBindMode !== 1) {
+            ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage(actionBindMode === 2 ? "net.minecraft.client.gui.GuiScreen" : bindingClass, "actionPerformed")] = function (...args) {
+                var id = ModAPI.util.wrap(args[1]).getCorrective().id;
+                var jsAction = inputArr.find(x => x.uid === id);
+                if (jsAction) {
+                    jsAction.click(ModAPI.util.wrap(args[0]), jsAction._btn);
+                }
+                return originalActionPerformed.apply(this, args);
+            }
+        }
+        ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage(bindingClass, "initGui")] = function (...args) {
+            originalInit.apply(this, args);
+            var gui = ModAPI.util.wrap(args[0]).getCorrective();
+            var buttons = inputArr.map(x => {
+                if (x.getPos) {
+                    var newPosition = x.getPos(gui);
+                    x.x = newPosition[0];
+                    x.y = newPosition[1];
+                }
+                var btn = button(x.uid, x.x, x.y, x.w, x.h, ModAPI.util.str(x.text));
+                var btnWrapped = ModAPI.util.wrap(btn).getCorrective();
+                (x.init || (() => { }))(btnWrapped);
+                x._btn = btnWrapped;
+                return btn;
+            });
+            buttons.forEach(guiButton => {
+                gui.buttonList.add(guiButton);
+            });
+        }
+    }
+
+    function unpressKb(kb, ghostMode) {
+        kb.pressed = 0;
+        if (ghostMode) {
+            kb.wasUnpressed = 0;
+        } else {
+            kb.wasUnpressed = 1;
+        }
+        kb.pressTime = 0;
+        kb.pressInitial = 0;
+        kb.pressTimeRaw = 0;
+    }
+
+    function unpressAllKeys(ghostMode) {
+        ModAPI.settings.keyBindings.forEach(kb => {
+            unpressKb(kb, ghostMode);
+        });
+        oldClickState = false;
+        simulateMouseEvent("mouseup");
+        simulateMouseEvent("mouseup", 2);
+    }
+
+    function serialiseKeybindingList(profile) {
+        var out = {};
+        ModAPI.settings.keyBindings.forEach(kb => {
+            out[ModAPI.util.ustr(kb.keyDescription.getRef())] = kb.keyCode;
+        });
+        localStorage.setItem("eagX.controlmap." + profile, JSON.stringify(out));
+        localStorage.setItem("eagX.controlmap.sens." + profile, ModAPI.settings.mouseSensitivity);
+        if (profile === PROFILE_CONTROLLER) {
+            localStorage.setItem("eagX.controlmap.tc." + profile, stickDriftSuppression);
+        } else {
+            localStorage.setItem("eagX.controlmap.tc." + profile, ModAPI.settings.touchControlOpacity);
+        }
+    }
+
+    function deserialiseKeybindingList(profile) {
+        var input = localStorage.getItem("eagX.controlmap." + profile);
+        if (!input && profile === PROFILE_CONTROLLER) {
+            input = CONTROLLER_DEFAULTS;
+        } else {
+            input = JSON.parse(input);
+        }
+        ModAPI.settings.keyBindings.forEach(kb => {
+            const keybinding = input[ModAPI.util.ustr(kb.keyDescription.getRef())];
+            if (typeof keybinding === "number") {
+                kb.keyCode = keybinding;
+            }
+        });
+
+        ModAPI.settings.mouseSensitivity = parseFloat(localStorage.getItem("eagX.controlmap.sens." + profile)) || 0;
+
+        stickDriftSuppression = parseFloat(localStorage.getItem("eagX.controlmap.tc." + profile)) || 0.3;
+        if (profile !== PROFILE_CONTROLLER) {
+            ModAPI.settings.touchControlOpacity = parseFloat(localStorage.getItem("eagX.controlmap.tc." + profile)) || 0;
+        }
+
+        if (isGuiControls(ModAPI.mc.currentScreen?.getRef())) {
+            ModAPI.mc.currentScreen.getCorrective().buttonList.array.forEach(slider => {
+                if (slider && isGuiSlider(slider.getRef())) {
+                    slider = slider.getCorrective();
+                    if (ModAPI.util.ustr(slider.options.enumString.getRef()) === "options.sensitivity") {
+                        slider.sliderValue = ModAPI.settings.mouseSensitivity;
+                        slider.displayString = ModAPI.mc.gameSettings.getKeyBinding(slider.options.getRef()).getRef();
+                    }
+
+                    if (ModAPI.util.ustr(slider.options.enumString.getRef()) === "options.touchControlOpacity") {
+                        slider.sliderValue = (profile === PROFILE_CONTROLLER) ? stickDriftSuppression : ModAPI.settings.touchControlOpacity;
+                        slider.displayString = ModAPI.mc.gameSettings.getKeyBinding(slider.options.getRef()).getRef();
+                    }
+                }
+                if (slider && isGuiOptionButton(slider.getRef())) {
+                    slider = slider.getCorrective();
+                    if (ModAPI.util.ustr(slider.enumOptions.enumString.getRef()) === "options.invertMouse") {
+                        slider.displayString = ModAPI.mc.gameSettings.getKeyBinding(slider.enumOptions.getRef()).getRef();
+                    }
+                }
+            });
+        }
+
+        ModAPI.reflect.getClassByName("KeyBinding").staticMethods.resetKeyBindingArrayAndHash.method();
+    }
+
+    var leftClickBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Left Click"),
+        CONTROLLER_CONSTANT + 10,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(leftClickBind.getRef());
+
+    var rightClickBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Right Click"),
+        CONTROLLER_CONSTANT + 11,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(rightClickBind.getRef());
+
+    var lookingBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Looking (any direction)"),
+        STICK_CONSTANT + 0,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(lookingBind.getRef());
+
+    var hotbarPreviousBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Hotbar Previous"),
+        CONTROLLER_CONSTANT + 4,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(hotbarPreviousBind.getRef());
+
+    var hotbarNextBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Hotbar Next"),
+        CONTROLLER_CONSTANT + 5,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(hotbarNextBind.getRef());
+
+    var shiftClickBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Shift Click"),
+        0,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(shiftClickBind.getRef());
+
+    var openSettingsBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Open Settings"),
+        0,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(openSettingsBind.getRef());
+
+    var parentScreenBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Parent Screen / Back"),
+        0,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(parentScreenBind.getRef());
+
+    var exitChatBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Exit Chat"),
+        0,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(exitChatBind.getRef());
+
+    var sendChatBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Send Chat"),
+        0,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(sendChatBind.getRef());
+
+    var secondaryCrouchBind = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.client.settings.KeyBinding").constructors[0](
+        ModAPI.util.str("Sneak #2"),
+        0,
+        ModAPI.util.str("Gamepad Support")
+    ));
+    ModAPI.settings.keyBindings.push(secondaryCrouchBind.getRef());
+
+    ModAPI.settings.keyBindSneak._pressed = 0;
+    Object.defineProperty(ModAPI.settings.keyBindSneak.getRef(), "$pressed", {
+        get: function () {
+            return this.$_pressed || secondaryCrouchBind.pressed;
+        },
+        set: function (val) {
+            this.$_pressed = val;
+        }
+    });
+
+    ModAPI.settings.keyBindings.forEach(kb => {
+        if (!kb) {
+            return;
+        }
+        var raw = kb.getRef();
+        var originalDefault = kb.keyCodeDefault;
+        var controllerDefault = CONTROLLER_DEFAULTS[ModAPI.util.ustr(kb.keyDescription.getRef())];
+        Object.defineProperty(raw, "$keyCodeDefault", {
+            get: function () {
+                return (CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) ? controllerDefault : originalDefault;
+            }
+        });
+    });
+
+    ModAPI.settings.keyBindChat.specialPreventionCondition = () => ModAPI.mc.currentScreen !== null;
+
+    const AUTOJUMP = false;
+    var canTick = true;
+    var processingShiftClick = false;
+    function wait(ms) {
+        return new Promise((res, rej) => {
+            setTimeout(() => { res() }, ms);
+        });
+    }
+    async function triggerShiftClick() {
+        if (processingShiftClick) {
+            return;
+        }
+        processingShiftClick = true;
+        forceShiftKey = true;
+        await wait(25);
+        simulateMouseEvent("mousedown");
+        await wait(25);
+        simulateMouseEvent("mouseup");
+        await wait(25);
+        forceShiftKey = false;
+        processingShiftClick = false;
+    }
+    ModAPI.addEventListener("update", () => {
+        canTick = true;
+        nextCanRun = true;
+        if (!ModAPI.player) {
+            return;
+        }
+        if ((CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) && AUTOJUMP && ModAPI.player.onGround && ModAPI.player.isCollidedHorizontally) {
+            ModAPI.promisify(ModAPI.player.jump)(); //lmao this caused a call stack implosion because it tries to trigger an achievement/stat XD
+        }
+        if (!ModAPI.mc.currentScreen) {
+            if (hotbarPreviousBind.pressed && ((hotbarPreviousBind.pressTimeRaw === 1) || (Math.max(hotbarPreviousBind.pressTimeRaw - 5, 0) % 2 === 1))) {
+                ModAPI.player.inventory.currentItem--;
+                ModAPI.player.inventory.currentItem = ((ModAPI.player.inventory.currentItem + 1) || 9) - 1;
+            }
+            if (hotbarNextBind.pressed && ((hotbarNextBind.pressTimeRaw === 1) || (Math.max(hotbarNextBind.pressTimeRaw - 5, 0) % 2 === 1))) {
+                ModAPI.player.inventory.currentItem++;
+                ModAPI.player.inventory.currentItem %= 9;
+            }
+        }
+        if (shiftClickBind.pressed && (shiftClickBind.pressTime <= 1) && ModAPI.mc.currentScreen) {
+            triggerShiftClick();
+        }
+        delayFunctionQueue.forEach((x) => x());
+        delayFunctionQueue = [];
+    });
+    var stateMap = [];
+    var stateMapAxes = [];
+    function updateStateMap() {
+        if (!gamepad) {
+            return;
+        }
+        var axes = gamepad.axes.map(STICK_DRIFT_SUPPRESSION_FN);
+        if (stateMap.length !== gamepad.buttons.length) {
+            stateMap = (new Array(gamepad.buttons.length)).fill(false);
+        }
+        if (stateMapAxes.length !== axes.length) {
+            stateMapAxes = (new Array(axes.length)).fill(false);
+        }
+        stateMap = gamepad.buttons.map(x => x.pressed);
+        stateMapAxes = axes.map(x => Math.abs(x) > STICK_PRESS_SENSITIVITY);
+    }
+    const EnumChatFormatting = ModAPI.reflect.getClassByName("EnumChatFormatting");
+    const RED = EnumChatFormatting.staticVariables.RED;
+    var delayFunctionQueue = [];
+    function processSpecialKeys(kb) {
+        var desc = ModAPI.util.ustr(kb.keyDescription?.getRef() || null);
+        if ((desc === "key.attack") && (ModAPI.mc.leftClickCounter <= 0)) {
+            kb.blacklisted = true;
+            delayFunctionQueue.push(() => {
+                ModAPI.mc.leftClickCounter = 1 + (5 * (ModAPI.player?.capabilities?.isCreativeMode || 0));
+            });
+            kb.pressed = 1;
+            kb.pressTime = 4;
+            return false;
+        } else if (desc === "key.attack") {
+            kb.pressed = 1;
+            kb.pressTime = 0;
+        }
+        return false;
+    }
+    function getParentScreen(gui) {
+        var guiWrapped = gui.getCorrective();
+
+        return guiWrapped.parentScreen ||
+            guiWrapped.parentGuiScreen ||
+            guiWrapped.field_146441_g ||
+            guiWrapped.parent;
+    }
+    var oldTime = Date.now();
+    function gamepadLoop() {
+        var now = Date.now();
+        var deltaTime = (now - oldTime) / 1000 * 60;
+        oldTime = now;
+        DEBUG_BIN.clear();
+        const STICK_LMB_BTN = Math.max(leftClickBind.keyCode - CONTROLLER_CONSTANT, -1);
+        const STICK_RMB_BTN = Math.max(rightClickBind.keyCode - CONTROLLER_CONSTANT, -1);
+        const STICK_LOOK = getStickData((lookingBind.keyCode - STICK_CONSTANT) || 0);
+        if (CURRENT_KMAP_PROFILE !== PROFILE_CONTROLLER) {
+            return;
+        }
+
+        updateStateMap();
+        if (!gamepad?.connected) {
+            GAMEPAD_CURSOR.style.display = "none";
+            return requestAnimationFrame(gamepadLoop);
+        } else {
+            updateStateMap();
+            gamepad = navigator.getGamepads()[gamepad.index];
+        }
+
+        if (!gamepad?.connected) {
+            return requestAnimationFrame(gamepadLoop);
+        }
+
+        DEBUG_BIN.add("RAW / " + gamepad.axes.toString());
+        var axes = gamepad.axes.map(STICK_DRIFT_SUPPRESSION_FN);
+        DEBUG_BIN.add("SUP / " + axes.toString());
+
+        if (ModAPI.player && !ModAPI.mc.currentScreen) {
+            GAMEPAD_CURSOR.style.display = "none";
+
+            if (STICK_LOOK) {
+                var coefficient = lerp(1.5, 15, ModAPI.settings.mouseSensitivity);
+
+                if (ModAPI.settings.invertMouse) {
+                    coefficient *= -1;
+                }
+
+                coefficient *= deltaTime;
+
+                ModAPI.player.rotationYaw += axes[STICK_LOOK.stick * 2 + 0] * ModAPI.settings.mouseSensitivity * coefficient;
+                ModAPI.player.rotationPitch += axes[STICK_LOOK.stick * 2 + 1] * ModAPI.settings.mouseSensitivity * coefficient;
+
+                ModAPI.player.rotationPitch = Math.min(ModAPI.player.rotationPitch, 90);
+                ModAPI.player.rotationPitch = Math.max(ModAPI.player.rotationPitch, -90);
+            }
+
+            if (openSettingsBind.isPressed()) {
+                ModAPI.mc.displayInGameMenu();
+            }
+        } else if (!isGuiControls(ModAPI.mc.currentScreen?.getRef()) || !ModAPI.mc.currentScreen?.buttonId) {
+            GAMEPAD_CURSOR.style.display = "block";
+
+            var coefficient = lerp(7.5, 30, ModAPI.settings.mouseSensitivity);
+
+            coefficient *= deltaTime;
+
+            var stickX = axes[0];
+            var stickY = axes[1];
+
+            // up - down - left - right
+            var dpad = [12, 13, 14, 15].map(k => gamepad.buttons[k].pressed);
+
+            if (dpad.reduce((acc, v) => acc || v)) {
+                stickX = 0;
+                stickY = 0;
+
+                stickX += -1 * dpad[2];
+                stickX += 1 * dpad[3];
+
+                stickY += -1 * dpad[0];
+                stickY += 1 * dpad[1];
+
+                stickX *= DPAD_SPEED;
+                stickY *= DPAD_SPEED;
+            }
+
+            simulateWheelEvent(75 * axes[3]);
+
+            CURSOR_POS.x += stickX * coefficient;
+            CURSOR_POS.y += stickY * coefficient;
+            positionCursor();
+            simulateMouseEvent("mousemove");
+
+            if (parentScreenBind.isPressed()
+                && ModAPI.mc.currentScreen
+                && (
+                    getParentScreen(ModAPI.mc.currentScreen)
+                    || ModAPI.player
+                )
+                // && (
+                //     !isGuiControls(ModAPI.mc.currentScreen?.getRef())
+                // )
+            ) {
+                ModAPI.promisify(ModAPI.mc.displayGuiScreen)(
+                    getParentScreen(ModAPI.mc.currentScreen)
+                        ? getParentScreen(ModAPI.mc.currentScreen).getRef()
+                        : null
+                );
+            }
+        } else if (isGuiControls(ModAPI.mc.currentScreen?.getRef()) && ModAPI.mc.currentScreen?.buttonId) {
+            unpressAllKeys(true);
+        }
+
+        if (ModAPI.mc.currentScreen && (!ModAPI.mc.currentScreen?.buttonId)) {
+            if ((STICK_LMB_BTN !== -1) && gamepad.buttons[STICK_LMB_BTN] && gamepad.buttons[STICK_LMB_BTN].pressed !== stateMap[STICK_LMB_BTN]) {
+                if (gamepad.buttons[STICK_LMB_BTN].pressed) {
+                    simulateMouseEvent("mousedown");
+                } else {
+                    simulateMouseEvent("mouseup");
+                }
+            }
+            if ((STICK_RMB_BTN !== -1) && gamepad.buttons[STICK_RMB_BTN] && gamepad.buttons[STICK_RMB_BTN].pressed !== stateMap[STICK_RMB_BTN]) {
+                if (gamepad.buttons[STICK_RMB_BTN].pressed) {
+                    simulateMouseEvent("mousedown", 2);
+                } else {
+                    simulateMouseEvent("mouseup", 2);
+                }
+            }
+        }
+
+        if (isGuiChat(ModAPI.mc.currentScreen?.getRef())) {
+            if (exitChatBind.isPressed()) {
+                ModAPI.mc.displayGuiScreen(null);
+            }
+            if (sendChatBind.isPressed()) {
+                ModAPI.mc.currentScreen.keyTyped(28, 28);
+            }
+        }
+
+        ModAPI.settings.keyBindings.forEach(kb => {
+            if (["key.categories.movement", "key.categories.gameplay"].includes(ModAPI.util.ustr(kb.keyCategory?.getRef())) && ModAPI.mc.currentScreen) {
+                return; //no moving while a gui is displayed
+            }
+            kb.pressTimeRaw ||= 0;
+            if (kb.keyCode >= STICK_CONSTANT) {
+                var stickData = getStickData(kb.keyCode - STICK_CONSTANT);
+                if (!stickData) {
+                    unpressKb(kb);
+                    return; //unbound
+                }
+                if (Math.sign(stickData.value) !== Math.sign(axes[stickData.index])) {
+                    unpressKb(kb);
+                    return; //conflicting directions (positive-negative)
+                }
+                var pressed = Math.abs(axes[stickData.index]) > Math.abs(stickData.value * STICK_PRESS_SENSITIVITY);
+                kb.pressed = pressed * 1;
+                DEBUG_BIN.add(ModAPI.util.ustr(kb.keyDescription?.getRef()) + " s= " + kb.pressed + " | " + kb.pressInitial);
+                if (pressed) {
+                    if (processSpecialKeys(kb)) {
+                        return;
+                    }
+                    var preventFlag = false;
+                    if (kb.specialPreventionCondition) {
+                        preventFlag = kb.specialPreventionCondition();
+                    }
+                    kb.pressInitial ||= kb.wasUnpressed && !kb.preventDefaultBehaviour && !preventFlag;
+                    kb.wasUnpressed = 0;
+                    if (!kb.preventDefaultBehaviour) {
+                        kb.pressTime += canTick;
+                    }
+                    kb.pressTimeRaw += canTick;
+                } else {
+                    unpressKb(kb);
+                }
+                return;
+            }
+            if (kb.keyCode >= CONTROLLER_CONSTANT) {
+                var keyCode = kb.keyCode - CONTROLLER_CONSTANT;
+                if (gamepad.buttons[keyCode]) {
+                    kb.pressed = gamepad.buttons[keyCode].pressed * 1;
+                    DEBUG_BIN.add(ModAPI.util.ustr(kb.keyDescription?.getRef()) + " b= " + kb.pressed + " | " + kb.pressInitial);
+                    if (gamepad.buttons[keyCode].pressed) {
+                        if (processSpecialKeys(kb)) {
+                            return;
+                        }
+                        var preventFlag = false;
+                        if (kb.specialPreventionCondition) {
+                            preventFlag = kb.specialPreventionCondition();
+                        }
+                        kb.pressInitial ||= kb.wasUnpressed && !kb.preventDefaultBehaviour && !preventFlag;
+                        kb.wasUnpressed = 0;
+                        if (!kb.preventDefaultBehaviour) {
+                            kb.pressTime += canTick;
+                        }
+                        kb.pressTimeRaw += canTick;
+                    } else {
+                        unpressKb(kb);
+                    }
+                }
+                return;
+            }
+        });
+        canTick = false;
+        if (isGuiControls(ModAPI.mc.currentScreen?.getRef())) {
+            EnumChatFormatting.staticVariables.RED = EnumChatFormatting.staticVariables.WHITE;
+
+            for (let k = 0; k < gamepad.buttons.length; k++) {
+                if (gamepad.buttons[k].pressed && !stateMap[k]) {
+                    ModAPI.promisify(ModAPI.mc.currentScreen.keyTyped)(k + CONTROLLER_CONSTANT, k + CONTROLLER_CONSTANT);
+                    break;
+                }
+            }
+            for (let k = 0; k < axes.length; k++) {
+                if ((Math.abs(axes[k]) > STICK_PRESS_SENSITIVITY) && !stateMapAxes[k]) {
+                    var idx = axisToIdx(axes[k], k);
+                    ModAPI.promisify(ModAPI.mc.currentScreen.keyTyped)(idx + STICK_CONSTANT, idx + STICK_CONSTANT);
+                    break;
+                }
+            }
+        } else if (ModAPI.mc.currentScreen) {
+            EnumChatFormatting.staticVariables.RED = RED;
+
+            for (let k = 0; k < gamepad.buttons.length; k++) {
+                if (gamepad.buttons[k].pressed && !stateMap[k]) {
+                    delayFunctionQueue.push(() => {
+                        if (!ModAPI.mc.currentScreen) {
+                            return;
+                        }
+                        ModAPI.promisify(ModAPI.mc.currentScreen.keyTyped)(0, k + CONTROLLER_CONSTANT);
+                    });
+                    break;
+                }
+            }
+            for (let k = 0; k < axes.length; k++) {
+                if ((Math.abs(axes[k]) > STICK_PRESS_SENSITIVITY) && !stateMapAxes[k]) {
+                    var idx = axisToIdx(axes[k], k);
+                    delayFunctionQueue.push(() => {
+                        if (!ModAPI.mc.currentScreen) {
+                            return;
+                        }
+                        ModAPI.promisify(ModAPI.mc.currentScreen.keyTyped)(0, idx + STICK_CONSTANT);
+                    });
+                    break;
+                }
+            }
+        }
 
 
-function movePlayer() {
-if (jupPressed) {console.log("W");keyEvent("w", "keydown");} 
-else if (!jupPressed) {keyEvent("w", "keyup");}
-if (jleftPressed) {console.log("A");keyEvent("a", "keydown");} 
-else if (!jleftPressed) {keyEvent("a", "keyup");}
-if (jdownPressed) {console.log("S");keyEvent("s", "keydown");} 
-else if (!jdownPressed) {keyEvent("s", "keyup");}
-if (jrightPressed) {console.log("D");keyEvent("d", "keydown");} 
-else if (!jrightPressed) {keyEvent("d", "keyup");}
+        if (CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) {
+            requestAnimationFrame(gamepadLoop);
+        }
+    }
 
-if (greenPressed && jump) {console.log("Spacebar");keyEvent(" ", "keydown");jump=false;}
-else if (!greenPressed) {keyEvent(" ", "keyup");jump=true;}
-if (redPressed) {console.log("Crouch1");keyEvent("shift", "keydown");}
-else if (!redPressed) {keyEvent("shift", "keyup");}
-if (bluePressed && inventory1) {console.log("Inventory1");keyEvent("e", "keydown");inventory1=false;}
-else if (!bluePressed) {keyEvent("e", "keyup");inventory1=true;}
-if (yellowPressed && inventory2) {console.log("Inventory2");keyEvent("e", "keydown");inventory2=false;}
-else if (!yellowPressed) {keyEvent("e", "keyup");inventory2=true;}
+    function getButtonName(buttonIndex) {
+        const buttonNames = [
+            'Gamepad A',        // 0
+            'Gamepad B',        // 1
+            'Gamepad X',        // 2
+            'Gamepad Y',        // 3
+            'Gamepad LB',       // 4
+            'Gamepad RB',       // 5
+            'Gamepad LT',       // 6
+            'Gamepad RT',       // 7
+            'Gamepad Back',     // 8
+            'Gamepad Start',    // 9
+            'Gamepad L3',       // 10 (Left Stick)
+            'Gamepad R3',       // 11 (Right Stick)
+            'D-Pad Up',  // 12
+            'D-Pad Down',// 13
+            'D-Pad Left',// 14
+            'D-Pad Right',// 15
+            'Gamepad Home',//16
+            'Touch Pad'//17
+        ];
 
-if (lbPressed && lefthotbar) {console.log("Left1");wheelEvent(canvas, 10);lefthotbar=false;}
-else if (!lbPressed) {lefthotbar=true;}
-if (rbPressed && righthotbar) {console.log("Right1");wheelEvent(canvas, -10);righthotbar=false;}
-else if (!rbPressed) {righthotbar=true;}
-if (ltPressed) {console.log("Place");mouseEvent(2, "mousedown", canvas)}
-else if (!ltPressed) {mouseEvent(2, "mouseup", canvas)}
-if (rtPressed) {console.log("Break");mouseEvent(0, "mousedown", canvas)}
-else if (!rtPressed) {mouseEvent(0, "mouseup", canvas)}
+        if (buttonIndex < 0 || buttonIndex >= buttonNames.length) {
+            return 'Gamepad #' + buttonIndex;
+        }
 
-if (pausePressed && pause) {console.log("Pause");keyEvent("`", "keydown");pause=false;}
-else if (!pausePressed) {keyEvent("`", "keyup");pause=true;}
-if (selectPressed && players) {console.log("Tab");keyEvent("tab", "keydown");players=false;}
-else if (!selectPressed) {keyEvent("Tab", "keyup");players=true;}
-if (ljsPressed) {console.log("Sprint");keyEvent("r", "keydown");}
-else if (!ljsPressed) {keyEvent("r", "keyup");}
-if (rjsPressed) {console.log("Crouch2");keyEvent("shift", "keydown");}
-else if (!rjsPressed) {keyEvent("shift", "keyup");}
+        return buttonNames[buttonIndex];
+    }
+    function axisToIdx(axis, idx) {
+        var base = Math.floor(idx / 2) * 4;
+        var isVertical = idx % 2;
+        var isPositive = axis > 0;
+        if (isPositive && !isVertical) {
+            return base;
+        }
+        if (isPositive && isVertical) {
+            return base + 1;
+        }
+        if (!isPositive && !isVertical) {
+            return base + 2;
+        }
+        if (!isPositive && isVertical) {
+            return base + 3;
+        }
+    }
+    function getStickData(idx) {
+        if (idx < 0) {
+            return null;
+        }
+        const radians = 90 * (Math.PI / 180);
+        const stick = Math.floor(idx / 4);
+        const DX = Math.round(Math.cos((idx % 4) * radians));
+        const DY = Math.round(Math.sin((idx % 4) * radians));
+        const direction = ({
+            "1,0": "Right",
+            "0,1": "Down",
+            "-1,0": "Left",
+            "0,-1": "Up"
+        })[
+            [DX, DY].join(",")
+        ];
 
-if (upPressed && perspective) {console.log("Perspective");keyEvent("f5", "keydown");perspective=false;} 
-else if (!upPressed && !perspective) {keyEvent("f5", "keyup");perspective=true;}
-if (leftPressed && debug) {console.log("Debug");keyEvent("f3", "keydown");debug=false;} 
-else if (!leftPressed) {keyEvent("f3", "keyup");debug=true;}
-if (downPressed && drop) {console.log("Drop");keyEvent("q", "keydown");drop=false;} 
-else if (!downPressed) {keyEvent("q", "keyup");drop=true;}
-if (rightPressed && chat) {console.log("Chat");keyEvent("t", "keydown");chat=false;} 
-else if (!rightPressed) {keyEvent("t", "keyup");chat=true;}  
-}
+        var basename;
+        if (Math.floor(idx / 4) < 2) {
+            basename = (Math.floor(idx / 4) === 0) ? "LS" : "RS"
+        } else {
+            basename = "Stick #" + (Math.floor(idx / 4) + 1);
+        }
+        const name = basename + " " + direction;
 
-function gameLoop() {
-rotateCamera();
-controllerInput();
-movePlayer();
-requestAnimationFrame(gameLoop);
-}
+        const index = stick * 2 + Math.abs(DY);
+        const value = idx % 2 ? DY : DX;
+        return {
+            stick: stick,
+            dx: DX,
+            dy: DY,
+            direction: direction,
+            index: index,
+            name: name,
+            value: value
+        }
+    }
 
-gameLoop();
-}
-// CSS for touch screen buttons, along with fixing iOS's issues with 100vh ignoring the naviagtion bar, and actually disabling zoom because safari ignores user-scalable=no :(
-let customStyle = document.createElement("style");
-customStyle.textContent = `
-  html, body, canvas {
-      height: 100svh !important;
-      height: -webkit-fill-available !important;
-      touch-action: pan-x pan-y;
-      -webkit-touch-callout: none;
-      -webkit-user-select: none;
-      -khtml-user-select: none;
-      -moz-user-select: none;
-      -ms-user-select: none;
-      user-select: none;
-      outline: none;
-      -webkit-tap-highlight-color: rgba(255, 255, 255, 0);
-  }
-  .hide {
-      display: none;
-  }
-  #fileUpload {
-      position: absolute;
-      left: 0;
-      right: 100vw;
-      top: 0; 
-      bottom: 100vh;
-      width: 100vw;
-      height: 100vh;
-      background-color:rgba(255,255,255,0.5);
-  }
-  `;
-document.documentElement.appendChild(customStyle);
+    const oldGetKeyDisplayString = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settins.GameSettings", "getKeyDisplayString")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settins.GameSettings", "getKeyDisplayString")] = function (keyCode) {
+        if (keyCode === 0) {
+            return ModAPI.util.str("(none)");
+        }
+        if ((!keyCode) || (keyCode < CONTROLLER_CONSTANT)) {
+            return oldGetKeyDisplayString.apply(this, [keyCode]);
+        }
+        if (keyCode >= STICK_CONSTANT) {
+            return ModAPI.util.str(getStickData(keyCode - STICK_CONSTANT)?.name || "(none)");
+        }
+        return ModAPI.util.str(getButtonName(keyCode - CONTROLLER_CONSTANT));
+    }
+
+    const oldGetSliderTextString = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.GameSettings", "getKeyBinding")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.GameSettings", "getKeyBinding")] = function ($this, option) {
+        if (!option) {
+            return oldGetSliderTextString.apply(this, [$this, option]);
+        }
+        var id = ModAPI.util.ustr(ModAPI.util.wrap(option).getCorrective().name.getRef());
+        if ((id === "EAGLER_TOUCH_CONTROL_OPACITY") && (CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER)) {
+            var value = stickDriftSuppression;
+            return ModAPI.util.str("Stick Drift Suppression: " + (value * 100).toFixed(0) + "%");
+        }
+        if ((id === "INVERT_MOUSE") && (CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER)) {
+            return ModAPI.util.str("Invert Stick: " + (ModAPI.settings.invertMouse ? "ON" : "OFF"));
+        }
+        return oldGetSliderTextString.apply(this, [$this, option]);
+    }
+
+    const oldSetSliderValue = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.GameSettings", "setOptionFloatValue")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.GameSettings", "setOptionFloatValue")] = function ($this, option, value) {
+        if (!option) {
+            return oldSetSliderValue.apply(this, [$this, option, value]);
+        }
+        var id = ModAPI.util.ustr(ModAPI.util.wrap(option).getCorrective().name.getRef());
+        if ((id === "EAGLER_TOUCH_CONTROL_OPACITY") && (CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER)) {
+            stickDriftSuppression = value;
+            return;
+        }
+        return oldSetSliderValue.apply(this, [$this, option, value]);
+    }
+
+    const oldGetSliderValue = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.GameSettings", "getOptionFloatValue")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.GameSettings", "getOptionFloatValue")] = function ($this, option) {
+        if (!option) {
+            return oldGetSliderValue.apply(this, [$this, option]);
+        }
+        var id = ModAPI.util.ustr(ModAPI.util.wrap(option).getCorrective().name.getRef());
+        if ((id === "EAGLER_TOUCH_CONTROL_OPACITY") && (CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER)) {
+            return stickDriftSuppression;
+        }
+        return oldGetSliderValue.apply(this, [$this, option]);
+    }
+
+    const oldKbIsPressed = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.KeyBinding", "isPressed")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.settings.KeyBinding", "isPressed")] = function ($this) {
+        if ((CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) && !$this.$blacklisted) {
+            var x = $this.$pressInitial;
+            $this.$pressInitial = 0;
+            return x;
+        }
+        return oldKbIsPressed.apply(this, [$this]);
+    }
+
+    const oldRightClickMouse = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.Minecraft", "rightClickMouse")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.Minecraft", "rightClickMouse")] = function ($this) {
+        if ((CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) && ModAPI.mc.rightClickDelayTimer !== 0) {
+            return;
+        }
+        return oldRightClickMouse.apply(this, [$this]);
+    }
+
+    const oldRenderIngameGui = ModAPI.hooks.methods["nmcg_GuiIngame_renderGameOverlay"];
+    ModAPI.hooks.methods["nmcg_GuiIngame_renderGameOverlay"] = function ($this, f) {
+        oldRenderIngameGui.apply(this, [$this, f]);
+        if (isDebugBuild) {
+            [...DEBUG_BIN].forEach((debugString, i) => {
+                if (!ModAPI.util.isCritical()) {
+                    ModAPI.mc.fontRendererObj.renderString(ModAPI.util.str(debugString || ""), 0, 36 + 12 * i, 0xFF0000, 1);
+                }
+            });
+        }
+    };
+
+    function isActiveKey() {
+        return ModAPI.settings.keyBindings.map(kb => kb.pressInitial).reduce((acc, state) => acc || state);
+    }
+
+    const oldKeyboardGetKeyState = ModAPI.hooks.methods["nlev_Keyboard_getEventKeyState"];
+    ModAPI.hooks.methods["nlev_Keyboard_getEventKeyState"] = function () {
+        if ((CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) && isActiveKey()) {
+            return 1;
+        }
+        var x = oldKeyboardGetKeyState.apply(this, []);
+        return x;
+    };
+    var nextCanRun = true;
+    const oldKeyboardNext = ModAPI.hooks.methods["nlev_Keyboard_next"];
+    ModAPI.hooks.methods["nlev_Keyboard_next"] = function () {
+        if ((CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) && isActiveKey() && nextCanRun) {
+            nextCanRun = false;
+            return 1;
+        }
+        var x = oldKeyboardNext.apply(this, []);
+        return x;
+    };
+
+    const oldActionPerformed = ModAPI.hooks.methods["nmcg_GuiControls_actionPerformed"];
+    ModAPI.hooks.methods["nmcg_GuiControls_actionPerformed"] = function ($this, $button) {
+        oldActionPerformed.apply(this, [$this, $button]);
+        var btnId = $button ? ModAPI.util.wrap($button).getCorrective().id : null;
+        if (btnId === 201) {
+            unpressAllKeys();
+        }
+    };
+    function loadProfile(profile, burn) {
+        EnumChatFormatting.staticVariables.RED = RED;
+        if ((CURRENT_KMAP_PROFILE === profile) && !burn) {
+            return;
+        }
+
+        unpressAllKeys();
+
+        if (!burn) {
+            serialiseKeybindingList(CURRENT_KMAP_PROFILE);
+        }
+        CURRENT_KMAP_PROFILE = profile;
+        deserialiseKeybindingList(CURRENT_KMAP_PROFILE);
+
+        if (CURRENT_KMAP_PROFILE === PROFILE_CONTROLLER) {
+            EnumChatFormatting.staticVariables.RED = EnumChatFormatting.staticVariables.WHITE;
+            const gamepads = navigator.getGamepads();
+            for (let i = 0; i < gamepads.length; i++) {
+                const gp = gamepads[i];
+                if (gp && gp.connected) {
+                    gamepad = gp;
+                    break;
+                }
+            }
+            gamepadLoop();
+        }
+
+        GAMEPAD_CURSOR.style.display = "none";
+    }
+    var KEYBOARD_BUTTON = null;
+    var CONTROLLER_BUTTON = null;
+    var profileButtons = [
+        {
+            text: "Keyboard",
+            click: (gui, btn) => {
+                loadProfile(PROFILE_KEYBOARD);
+                if (btn) {
+                    btn.enabled = 1 * (CURRENT_KMAP_PROFILE !== PROFILE_KEYBOARD);
+                }
+                if (CONTROLLER_BUTTON) {
+                    CONTROLLER_BUTTON.enabled = 1;
+                }
+            },
+            getPos: (gui) => {
+                return [
+                    (gui.width / 2) + 5,
+                    42
+                ]
+            },
+            init: (btn) => {
+                KEYBOARD_BUTTON = btn;
+                btn.enabled = 1 * (CURRENT_KMAP_PROFILE !== PROFILE_KEYBOARD);
+            },
+            w: 75,
+            h: 20,
+            uid: 14275427
+        },
+        {
+            text: "Controller",
+            click: (gui, btn) => {
+                loadProfile(PROFILE_CONTROLLER);
+                if (btn) {
+                    btn.enabled = 1 * (CURRENT_KMAP_PROFILE !== PROFILE_CONTROLLER);
+                }
+                if (KEYBOARD_BUTTON) {
+                    KEYBOARD_BUTTON.enabled = 1;
+                }
+            },
+            getPos: (gui) => {
+                return [
+                    (gui.width / 2) + 80,
+                    42
+                ]
+            },
+            init: (btn) => {
+                CONTROLLER_BUTTON = btn;
+                btn.enabled = 1 * (CURRENT_KMAP_PROFILE !== PROFILE_CONTROLLER);
+            },
+            w: 75,
+            h: 20,
+            uid: 14275428
+        }
+    ];
+
+    button_utility_script2(profileButtons, "net.minecraft.client.gui.GuiControls", 0);
+
+    window.addEventListener("beforeunload", () => {
+        serialiseKeybindingList(CURRENT_KMAP_PROFILE);
+    }, true);
+
+    loadProfile(PROFILE_KEYBOARD, true);
+
+    var forceShiftKey = false;
+    const oldIsShiftEntry = ModAPI.hooks.methods["nlevi_PlatformInput_keyboardIsKeyDown"];
+    ModAPI.hooks.methods["nlevi_PlatformInput_keyboardIsKeyDown"] = function (...args) {
+        return (((args[0] === 42) && forceShiftKey) * 1) || oldIsShiftEntry.apply(this, args);
+    }
+    const VIBRATION_STRENGTH_MULTIPLIER = 0.0;
+    const CONTROLLER_HAPTIC_FEEDBACK = {
+        "inFire": {
+            intensity: 0.6,
+            duration: 0.2
+        },
+        "lightningBolt": {
+            intensity: 1,
+            duration: 0.6
+        },
+        "onFire": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "lava": {
+            intensity: 0.6,
+            duration: 0.2
+        },
+        "inWall": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "drown": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "starve": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "cactus": {
+            intensity: 0.6,
+            duration: 0.2
+        },
+        "outOfWorld": {
+            intensity: 1,
+            duration: 0.2
+        },
+        "generic": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "magic": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "wither": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "anvil": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "fallingBlock": {
+            intensity: 0.3,
+            duration: 0.2
+        },
+        "fall": {
+            intensity: 0.05,
+            duration: 0.03,
+            scalar: true,
+        }
+    }
+    function vibrateController(intensity, duration) {
+        if (!gamepad) {
+            return;
+        }
+        console.log(`[!] Vibrating controller for ${duration}s at ${intensity} intensity.`);
+        gamepad.vibrationActuator.playEffect("dual-rumble", {
+            startDelay: 0,
+            duration: duration * 1000,
+            weakMagnitude: intensity * VIBRATION_STRENGTH_MULTIPLIER,
+            strongMagnitude: intensity * VIBRATION_STRENGTH_MULTIPLIER,
+        });
+    }
+    function stopControllerVibration() {
+        if (!gamepad) {
+            return;
+        }
+        gamepad.vibrationActuator.playEffect("dual-rumble", {
+            startDelay: 0,
+            duration: 0,
+            weakMagnitude: 0,
+            strongMagnitude: 0,
+        });
+    }
+    const oldDamagePlayer = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "damageEntity")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "damageEntity")] = function ($player, $source, $amount) {
+        var player = ModAPI.util.wrap($player);
+        if ($source && !player.isEntityInvulnerable($source)) {
+            var key = ModAPI.util.ustr(ModAPI.util.wrap($source).damageType?.getRef());
+            var conf = CONTROLLER_HAPTIC_FEEDBACK[key];
+            if (key && conf) {
+                if (conf.scalar) {
+                    vibrateController(conf.intensity * $amount, conf.duration * $amount);
+                } else {
+                    vibrateController(conf.intensity, conf.duration);
+                }
+            }
+        }
+        oldDamagePlayer.apply(this, [$player, $source, $amount]);
+    }
+
+    const oldRespawnPlayer = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "respawnPlayer")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "respawnPlayer")] = function ($player) {
+        stopControllerVibration();
+        oldRespawnPlayer.apply(this, [$player]);
+    }
+})();
